@@ -1,0 +1,47 @@
+{
+  "$schema": "https://locaryn.dev/schema/morph.json/v0.1",
+  "apiVersion": "0.1",
+  "name": "morph-voice-live",
+  "displayName": "Conversation vocale",
+  "version": "0.1.0-beta.1",
+  "description": "Parler à Locaryn et l'entendre répondre, sans clavier. Le micro reste ouvert, la fin de phrase se repère au silence, la réponse est lue à voix haute ; parler par-dessus la coupe. Tout reste sur la machine.",
+  "author": "Locaryn Team",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Locaryn/morph-voice-live",
+  "repository": "https://github.com/Locaryn/morph-voice-live",
+  "keywords": ["voice", "conversation", "speech-to-speech", "realtime", "tts", "stt"],
+  "permissions": {
+    "files.read": {
+      "reason": "Lire les fichiers audio de la voix locale pour les jouer."
+    }
+  },
+  "deps": [
+    { "name": "morph-dictaphone", "version": ">=2.4.0-beta.1" }
+  ],
+  "capabilities": ["voice-conversation"],
+  "ui_contributions": {
+    "slots": [
+      {
+        "id": "voice-live-btn",
+        "slot": "composer.before_send",
+        "order": 11,
+        "type": "custom-element",
+        "entry": "dist/ui.js",
+        "tag": "locaryn-voice-live-btn",
+        "hint": "Conversation vocale : parlez, Locaryn répond à voix haute"
+      }
+    ]
+  },
+  "beta": true,
+  "stability": "untested",
+  "versions": [
+    {
+      "version": "0.1.0-beta.1",
+      "is_beta": true,
+      "summary": "Première version : écoute continue, fin de phrase au silence, transcription whisper (morph-dictaphone), lecture par la voix de Windows ou morph-voice-tts, coupure à la voix.",
+      "tag": "v0.1.0-beta.1",
+      "released_at": "2026-11-01",
+      "install_source": "Locaryn/morph-voice-live#v0.1.0-beta.1"
+    }
+  ]
+}
