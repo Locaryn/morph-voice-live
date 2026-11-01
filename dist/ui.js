@@ -395,6 +395,10 @@
           }
           self.flux = flux;
           self.ctx = new (window.AudioContext || window.webkitAudioContext)();
+          // Créé après la promesse du micro, hors du clic : il peut naître suspendu.
+          self.ctx.resume().catch(function (e) {
+            console.warn("[voix] audio suspendu :", e);
+          });
           self.analyse = self.ctx.createAnalyser();
           self.analyse.fftSize = 1024;
           self.ctx.createMediaStreamSource(flux).connect(self.analyse);
@@ -518,8 +522,11 @@
         if (reponse) self.parler(reponse);
         else self.ecouter();
       };
+      // Le champ se met à jour au rendu suivant : envoyer avant partait à vide.
       a.chat.setText(texte);
-      a.chat.submit();
+      window.setTimeout(function () {
+        if (self.actif) a.chat.submit();
+      }, 150);
     }
 
     parler(texte) {

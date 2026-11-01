@@ -21,7 +21,7 @@ terminent la conversation. Rien ne sort de la machine.
 
 ## Exige
 
-- Locaryn ≥ 0.4.58 (événement `chat.reply`).
+- Locaryn ≥ 0.4.58 (événement `chat.reply`, Locaryn/Locaryn#117).
 - morph-dictaphone (transcription).
 - Facultatif : morph-voice-tts (voix locale).
 
