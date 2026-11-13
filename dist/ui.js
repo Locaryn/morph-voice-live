@@ -18,7 +18,16 @@
   "use strict";
 
   var TAG = "locaryn-voice-live-btn";
+  /** Le nom du manifeste : l'hôte rend nos réglages (« Régler ») sous ce nom. */
+  var NOM = "morph-voice-live";
   var CLE_VOIX = "morph-voice-live.voix";
+  /** Langues reconnues dans le texte à lire. */
+  var LANGUES = ["fr", "en", "es", "de", "it", "pt"];
+  /** Parole cumulée minimale pour qu'un clip parte à la transcription : en
+   *  dessous, c'est un bruit (souffle, clic, toux), et whisper invente. */
+  var PAROLE_MIN = 450;
+  /** Seuil de parole = bruit de fond × facteur, selon la sensibilité. */
+  var FACTEURS = { haute: 2.2, normale: 3.2, basse: 4.8 };
   var BARRES = 10;
   /** Silence qui clôt une phrase, en ms. */
   var FIN_DE_PHRASE = 900;
@@ -120,8 +129,146 @@
     return "";
   }
 
-  function langue() {
-    return (document.documentElement.lang || navigator.language || "fr").slice(0, 2);
+  // ── Réglages et langue ───────────────────────────────────────────────────
+
+  var REGLAGES_PAR_DEFAUT = { langue: "auto", moteur: "", voix: "", sensibilite: "normale" };
+
+  /** Les réglages posés dans « Régler ». Un Locaryn sans `settings.get` garde
+   *  les valeurs par défaut. */
+  function lireReglages() {
+    var a = api();
+    if (!a || !a.settings || !a.settings.get) return Promise.resolve(Object.assign({}, REGLAGES_PAR_DEFAUT));
+    return a.settings
+      .get(NOM)
+      .then(function (v) {
+        var r = Object.assign({}, REGLAGES_PAR_DEFAUT);
+        Object.keys(REGLAGES_PAR_DEFAUT).forEach(function (k) {
+          if (v && typeof v[k] === "string" && v[k].trim()) r[k] = v[k].trim();
+        });
+        return r;
+      })
+      .catch(function (e) {
+        console.warn("[voix] réglages illisibles, valeurs par défaut :", e);
+        return Object.assign({}, REGLAGES_PAR_DEFAUT);
+      });
+  }
+
+  /** La langue de l'interface, à défaut de mieux. */
+  function langueApp() {
+    var candidats = [document.documentElement.lang].concat(navigator.languages || [], navigator.language);
+    for (var i = 0; i < candidats.length; i++) {
+      var c = String(candidats[i] || "").slice(0, 2).toLowerCase();
+      if (LANGUES.indexOf(c) >= 0) return c;
+    }
+    return "fr";
+  }
+
+  var MOTS = {
+    fr: ["le", "la", "les", "des", "est", "et", "une", "un", "je", "vous", "pour", "pas", "que", "qui", "dans", "sur", "avec", "ce", "il", "nous", "du", "au", "mais", "c'est"],
+    en: ["the", "is", "and", "you", "to", "of", "it", "that", "for", "with", "this", "are", "was", "be", "have", "not", "on", "can", "your", "what"],
+    es: ["el", "los", "las", "es", "y", "una", "por", "para", "con", "que", "del", "se", "no", "lo", "su", "como", "pero", "muy"],
+    de: ["der", "die", "das", "und", "ist", "nicht", "ich", "sie", "es", "ein", "eine", "mit", "auf", "für", "zu", "den", "auch", "sich"],
+    it: ["il", "di", "che", "è", "per", "una", "sono", "non", "gli", "della", "con", "anche", "questo", "come", "più"],
+    pt: ["o", "os", "não", "uma", "para", "com", "que", "do", "da", "em", "você", "é", "mas", "como", "isso"],
+  };
+  var ACCENTS = { fr: /[éèêàçùœ]/g, es: /[ñ¿¡]/g, de: /[äöüß]/g, pt: /[ãõ]/g };
+
+  /** La langue d'un texte, par ses mots les plus courants ; `defaut` si le
+   *  texte est trop court pour trancher. */
+  function detecterLangue(texte, defaut) {
+    var bas = String(texte || "").toLowerCase();
+    var mots = bas.match(/[a-zà-ÿœß']+/g) || [];
+    var meilleure = defaut;
+    var max = 1.5;
+    LANGUES.forEach(function (lg) {
+      var liste = MOTS[lg];
+      var score = mots.filter(function (m) {
+        return liste.indexOf(m) >= 0;
+      }).length;
+      if (ACCENTS[lg]) score += Math.min((bas.match(ACCENTS[lg]) || []).length, 4) * 0.5;
+      if (score > max) {
+        max = score;
+        meilleure = lg;
+      }
+    });
+    return meilleure;
+  }
+
+  /** La langue dans laquelle lire ce texte. */
+  function langueDeLecture(texte, reglages) {
+    if (reglages && reglages.langue && reglages.langue !== "auto") return reglages.langue;
+    return detecterLangue(texte, langueApp());
+  }
+
+  /** Les voix du système : la liste arrive parfois après un premier appel vide. */
+  function voixDuSysteme() {
+    var s = window.speechSynthesis;
+    if (!s) return Promise.resolve([]);
+    var deja = s.getVoices();
+    if (deja.length) return Promise.resolve(deja);
+    return new Promise(function (resolve) {
+      var fini = false;
+      function rendre() {
+        if (fini) return;
+        fini = true;
+        s.removeEventListener("voiceschanged", rendre);
+        resolve(s.getVoices());
+      }
+      s.addEventListener("voiceschanged", rendre);
+      window.setTimeout(rendre, 1200);
+    });
+  }
+
+  /** La voix pour cette langue : celle nommée dans les réglages si elle parle
+   *  cette langue, sinon une voix naturelle de la langue, sinon n'importe
+   *  quelle voix de la langue. `null` : aucune voix installée pour elle. */
+  function choisirVoix(voix, lg, nomVoulu) {
+    var dansLaLangue = voix.filter(function (v) {
+      return v.lang && v.lang.slice(0, 2).toLowerCase() === lg;
+    });
+    if (!dansLaLangue.length) return null;
+    var voulu = String(nomVoulu || "").toLowerCase();
+    var nommee = voulu && dansLaLangue.find(function (v) {
+      return v.name.toLowerCase().indexOf(voulu) >= 0;
+    });
+    if (nommee) return nommee;
+    var naturelle = dansLaLangue.find(function (v) {
+      return /natural|neural|online/i.test(v.name);
+    });
+    return naturelle || dansLaLangue[0];
+  }
+
+  // ── Ce que whisper invente sur du silence ────────────────────────────────
+
+  var HALLUCINATIONS = [
+    /sous-titr/i,
+    /merci d'avoir regard/i,
+    /thanks? (you )?for watching/i,
+    /amara\.org/i,
+    /abonnez-vous/i,
+    /subscribe/i,
+  ];
+
+  /** Une transcription à envoyer ? Écarte le vide, les suites de chiffres
+   *  (« 2.0000 2.0000 3.0000 »), les répétitions, les écritures sans rapport
+   *  avec une langue à alphabet latin (« ਗ. 終 ») et les formules connues. */
+  function transcriptionValide(texte) {
+    var t = String(texte || "").trim();
+    if (!t) return false;
+    var lettres = (t.match(/\p{L}/gu) || []).length;
+    if (lettres < 2 || lettres / t.replace(/\s/g, "").length < 0.6) return false;
+    var latines = (t.match(/[A-Za-zÀ-ÿŒœß]/g) || []).length;
+    if (latines / lettres < 0.8) return false;
+    var mots = t.toLowerCase().match(/[\p{L}']+/gu) || [];
+    if (mots.length >= 4) {
+      var uniques = mots.filter(function (m, i) {
+        return mots.indexOf(m) === i;
+      }).length;
+      if (uniques / mots.length < 0.35) return false;
+    }
+    return !HALLUCINATIONS.some(function (re) {
+      return re.test(t);
+    });
   }
 
   /** Le texte à dire : sans code, sans balises Markdown, sans liens bruts. */
@@ -158,19 +305,15 @@
   // ── Lecture à voix haute ─────────────────────────────────────────────────
 
   /** Voix de Windows : immédiate, hors ligne. */
-  function direSysteme(phrase, controle) {
+  function direSysteme(phrase, controle, cible) {
     return new Promise(function (resolve) {
       if (!window.speechSynthesis) {
         resolve();
         return;
       }
       var u = new SpeechSynthesisUtterance(phrase);
-      var lg = langue();
-      var voix = window.speechSynthesis.getVoices().filter(function (v) {
-        return v.lang && v.lang.slice(0, 2) === lg;
-      });
-      if (voix.length) u.voice = voix[0];
-      u.lang = lg;
+      if (cible.voix) u.voice = cible.voix;
+      u.lang = cible.voix ? cible.voix.lang : cible.langue;
       u.onend = function () {
         resolve();
       };
@@ -187,8 +330,8 @@
 
   /** Voix locale (morph-voice-tts) : un WAV par phrase, la suivante se prépare
    *  pendant la lecture. */
-  function synthetiser(phrase) {
-    return appeler("synthesize_speech", { text: phrase, language: langue() }).then(function (r) {
+  function synthetiser(phrase, lg) {
+    return appeler("synthesize_speech", { text: phrase, language: lg }).then(function (r) {
       var chemin = r.audio_path || r.path;
       if (!chemin) throw new Error(r.error || "aucun fichier audio rendu");
       var a = api();
@@ -216,23 +359,42 @@
     });
   }
 
-  /** Lire toutes les phrases, jusqu'au bout ou jusqu'à `controle.coupe`. */
-  function lire(texte, voix, controle) {
-    var liste = phrases(aDire(texte));
-    if (!liste.length) return Promise.resolve();
-    if (voix !== "locale") {
+  var NOMS_LANGUES = { fr: "française", en: "anglaise", es: "espagnole", de: "allemande", it: "italienne", pt: "portugaise" };
+  var sansVoixSignale = {};
+
+  /** Lire avec la voix du système, dans la langue du texte. */
+  function lireSysteme(liste, lg, reglages, controle) {
+    return voixDuSysteme().then(function (toutes) {
+      var voix = choisirVoix(toutes, lg, reglages.voix);
+      if (!voix && toutes.length && !sansVoixSignale[lg]) {
+        sansVoixSignale[lg] = true;
+        toast(
+          "Aucune voix " + (NOMS_LANGUES[lg] || lg) + " sur ce système : ajoutez-en une dans Windows (Heure et langue → Voix), ou passez à la voix locale.",
+          "warning",
+        );
+      }
+      var cible = { voix: voix, langue: lg };
       return liste.reduce(function (p, phrase) {
         return p.then(function () {
-          return controle.coupe ? null : direSysteme(phrase, controle);
+          return controle.coupe ? null : direSysteme(phrase, controle, cible);
         });
       }, Promise.resolve());
-    }
-    var suivante = synthetiser(liste[0]);
+    });
+  }
+
+  /** Lire toutes les phrases, jusqu'au bout ou jusqu'à `controle.coupe`. */
+  function lire(texte, voix, controle, reglages) {
+    var propre = aDire(texte);
+    var liste = phrases(propre);
+    if (!liste.length) return Promise.resolve();
+    var lg = langueDeLecture(propre, reglages);
+    if (voix !== "locale") return lireSysteme(liste, lg, reglages, controle);
+    var suivante = synthetiser(liste[0], lg);
     return liste.reduce(function (p, _phrase, i) {
       return p.then(function () {
         if (controle.coupe) return null;
         var courante = suivante;
-        if (i + 1 < liste.length) suivante = synthetiser(liste[i + 1]);
+        if (i + 1 < liste.length) suivante = synthetiser(liste[i + 1], lg);
         return courante.then(function (url) {
           return controle.coupe ? null : jouer(url, controle);
         });
@@ -240,7 +402,7 @@
     }, Promise.resolve()).catch(function (e) {
       // Voix locale absente ou en panne : la voix de Windows prend le relais.
       toast("Voix locale indisponible, voix du système : " + (e && e.message ? e.message : e), "warning");
-      return lire(texte, "systeme", controle);
+      return lire(texte, "systeme", controle, reglages);
     });
   }
 
@@ -251,8 +413,12 @@
       super();
       this.etat = "repos";
       this.voix = "systeme";
+      this.voixChoisie = false;
+      this.reglages = Object.assign({}, REGLAGES_PAR_DEFAUT);
       try {
-        this.voix = localStorage.getItem(CLE_VOIX) === "locale" ? "locale" : "systeme";
+        var garde = localStorage.getItem(CLE_VOIX);
+        this.voixChoisie = garde === "locale" || garde === "systeme";
+        this.voix = garde === "locale" ? "locale" : "systeme";
       } catch (e) {
         console.warn("[voix] préférence illisible :", e);
       }
@@ -326,6 +492,7 @@
       );
       voix.addEventListener("click", function () {
         self.voix = self.voix === "locale" ? "systeme" : "locale";
+        self.voixChoisie = true;
         try {
           localStorage.setItem(CLE_VOIX, self.voix);
         } catch (e) {
@@ -380,6 +547,14 @@
       this.actif = true;
       this.etat = "calibrage";
       this.render();
+      // Relus à chaque conversation : un changement dans « Régler » vaut dès la suivante.
+      lireReglages().then(function (r) {
+        self.reglages = r;
+        if (!self.voixChoisie && (r.moteur === "locale" || r.moteur === "systeme") && self.voix !== r.moteur) {
+          self.voix = r.moteur;
+          if (self.actif) self.render();
+        }
+      });
       document.addEventListener("keydown", this.onKey);
       this.desabonner = a.events.on("chat.reply", function (d) {
         if (self.attenteReponse) self.attenteReponse(d && d.text ? String(d.text) : "");
@@ -433,7 +608,8 @@
         var fond = mesures.reduce(function (a, b) {
           return a + b;
         }, 0) / mesures.length;
-        self.seuil = Math.max(0.012, fond * 3);
+        var facteur = FACTEURS[self.reglages.sensibilite] || FACTEURS.normale;
+        self.seuil = Math.max(0.015, fond * facteur);
         self.ecouter();
       }, 50);
     }
@@ -454,6 +630,7 @@
       var silence = 0;
       var aParle = false;
       var debutParole = 0;
+      var paroleCumulee = 0;
       this.minuterie = window.setInterval(function () {
         if (!self.actif) return;
         var r = self.rms();
@@ -461,6 +638,7 @@
         if (r > self.seuil) {
           parole += 50;
           silence = 0;
+          if (aParle) paroleCumulee += 50;
           if (!aParle && parole >= 150) {
             aParle = true;
             debutParole = Date.now();
@@ -474,8 +652,11 @@
         var rien = !aParle && Date.now() - debut > ATTENTE_MAX;
         if (!finie && !rien) return;
         window.clearInterval(self.minuterie);
+        // Un bruit bref (souffle, clic) n'est pas une phrase : whisper en
+        // ferait des chiffres ou une autre langue.
+        var tropCourt = finie && paroleCumulee < PAROLE_MIN;
         enr.onstop = function () {
-          if (rien) self.ecouter();
+          if (rien || tropCourt) self.ecouter();
           else self.transcrire(new Blob(morceaux, { type: enr.mimeType || type }), enr.mimeType || type);
         };
         enr.stop();
@@ -488,12 +669,19 @@
       this.poser("transcription");
       enDataUrl(blob)
         .then(function (url) {
-          return appeler("ui_transcribe_clip", { audio_base64: url, mime: type });
+          var args = { audio_base64: url, mime: type };
+          // Une langue fixée guide whisper, qui sinon devine sur chaque clip.
+          if (self.reglages.langue && self.reglages.langue !== "auto") args.language = self.reglages.langue;
+          return appeler("ui_transcribe_clip", args);
         })
         .then(function (res) {
           var texte = String(res.text || "").trim();
-          if (!texte) self.ecouter();
-          else self.envoyer(texte);
+          if (transcriptionValide(texte)) {
+            self.envoyer(texte);
+            return;
+          }
+          if (texte) console.info("[voix] transcription écartée (bruit) :", texte);
+          self.ecouter();
         })
         .catch(function (e) {
           var msg = e && e.message ? e.message : String(e);
@@ -543,7 +731,7 @@
         dessus = r > self.seuil * 1.8 ? dessus + 50 : 0;
         if (dessus >= 300) self.couperLecture();
       }, 50);
-      lire(texte, this.voix, controle).then(function () {
+      lire(texte, this.voix, controle, this.reglages).then(function () {
         window.clearInterval(self.minuterie);
         self.controle = null;
         if (self.actif) self.ecouter();
@@ -587,4 +775,5 @@
   }
 
   if (!customElements.get(TAG)) customElements.define(TAG, VoiceLiveButton);
+  window.__locarynVoiceLive = { detecterLangue: detecterLangue, choisirVoix: choisirVoix, transcriptionValide: transcriptionValide };
 })();

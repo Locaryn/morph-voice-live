@@ -3,22 +3,34 @@
   "apiVersion": "0.1",
   "name": "morph-voice-live",
   "displayName": "Conversation vocale",
-  "version": "0.1.0-beta.1",
+  "version": "0.2.0-beta.1",
   "description": "Parler à Locaryn et l'entendre répondre, sans clavier. Le micro reste ouvert, la fin de phrase se repère au silence, la réponse est lue à voix haute ; parler par-dessus la coupe. Tout reste sur la machine.",
   "author": "Locaryn Team",
   "license": "Apache-2.0",
   "homepage": "https://github.com/Locaryn/morph-voice-live",
   "repository": "https://github.com/Locaryn/morph-voice-live",
-  "keywords": ["voice", "conversation", "speech-to-speech", "realtime", "tts", "stt"],
+  "keywords": [
+    "voice",
+    "conversation",
+    "speech-to-speech",
+    "realtime",
+    "tts",
+    "stt"
+  ],
   "permissions": {
     "files.read": {
       "reason": "Lire les fichiers audio de la voix locale pour les jouer."
     }
   },
   "deps": [
-    { "name": "morph-dictaphone", "version": ">=2.4.0-beta.1" }
+    {
+      "name": "morph-dictaphone",
+      "version": ">=2.4.0-beta.1"
+    }
   ],
-  "capabilities": ["voice-conversation"],
+  "capabilities": [
+    "voice-conversation"
+  ],
   "ui_contributions": {
     "slots": [
       {
@@ -30,11 +42,74 @@
         "tag": "locaryn-voice-live-btn",
         "hint": "Conversation vocale : parlez, Locaryn répond à voix haute"
       }
+    ],
+    "settings_sections": [
+      {
+        "id": "voix",
+        "title": "Voix",
+        "description": "Comment Locaryn vous écoute et vous répond à voix haute.",
+        "fields": [
+          {
+            "key": "langue",
+            "label": "Langue",
+            "kind": "choice",
+            "options": [
+              "auto",
+              "fr",
+              "en",
+              "es",
+              "de",
+              "it",
+              "pt"
+            ],
+            "default": "auto",
+            "hint": "« auto » : la langue de chaque réponse est reconnue, et la voix suit. Une langue fixée sert aussi à la transcription de ce que vous dites."
+          },
+          {
+            "key": "moteur",
+            "label": "Voix de lecture",
+            "kind": "choice",
+            "options": [
+              "systeme",
+              "locale"
+            ],
+            "default": "systeme",
+            "hint": "« systeme » : voix de Windows, immédiate. « locale » : voix du morph Synthèse vocale, plus naturelle, plus lente. Le bouton de la pastille la change aussi."
+          },
+          {
+            "key": "voix",
+            "label": "Nom de la voix du système",
+            "kind": "string",
+            "default": "",
+            "hint": "Un morceau du nom, par exemple « Denise » ou « Henri ». Vide : la voix la plus naturelle de la langue. Une voix d'une autre langue n'est jamais prise."
+          },
+          {
+            "key": "sensibilite",
+            "label": "Sensibilité du micro",
+            "kind": "choice",
+            "options": [
+              "normale",
+              "basse",
+              "haute"
+            ],
+            "default": "normale",
+            "hint": "« basse » dans une pièce bruyante : les bruits brefs ne partent plus en message. « haute » pour une voix douce ou un micro lointain."
+          }
+        ]
+      }
     ]
   },
   "beta": true,
   "stability": "untested",
   "versions": [
+    {
+      "version": "0.2.0-beta.1",
+      "is_beta": true,
+      "summary": "Réglages (langue, voix, sensibilité), voix choisie d'après la langue du texte, silences et bruits ignorés au lieu de messages inventés.",
+      "tag": "v0.2.0-beta.1",
+      "released_at": "2026-11-13",
+      "install_source": "Locaryn/morph-voice-live#v0.2.0-beta.1"
+    },
     {
       "version": "0.1.0-beta.1",
       "is_beta": true,
